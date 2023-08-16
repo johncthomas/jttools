@@ -12,6 +12,7 @@ from copy import copy, deepcopy
 import pandas as pd
 
 pd.options.display.date_yearfirst = True
+
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -39,14 +40,20 @@ OLS = sm.regression.linear_model.OLS
 import pickle
 
 from jttools.picklepot import PicklePot
-from bioscreen import experiment_classes
+from bioscreen.experiment_classes import *
+from bioscreen.PCA import CountPCA
 
 import xlsxwriter
 
+from jttools.statistics import *
+from jttools.data_wrangling import *
+from jttools.plotting import *
 
+monkey_patch_dataframe(pd)
 
-from jttools.data_wrangling import AttrMapAC
 AMap = AttrMapAC
+
+rpy2_magic_cmd = '%reload_ext rpy2.ipython'
 
 revcomp = lambda s: ''.join([dict(zip('ACTGN', 'TGACN'))[nt] for nt in s[::-1]])
 sns.set(style='whitegrid', context='paper')
@@ -143,9 +150,6 @@ def nlprint(things: typing.Collection[str], sort=False):
     if sort:
         things = sorted(things)
     print('\n'.join(things))
-
-
-
 
 
 def rpy2_set_lib():

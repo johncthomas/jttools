@@ -7,6 +7,13 @@ import pandas as pd
 logging.basicConfig()
 logger = logging.getLogger(__name__)
 
+from jttools.data_wrangling import read_txt
+
+#todo add hasing.
+
+# pandas.util.hash_pandas_object returns a series same length as the original thing,
+#    could probbably hash(sum(thing.map(str)))
+
 class PicklePot:
     """
     For managing pickled objects in a directory. Only works in the same scope from which
@@ -15,7 +22,8 @@ class PicklePot:
     Written pickle files have a version number.
     """
 
-    def __init__(self, pickle_dir='pickles', potname='picklepot',):
+    def __init__(self, pickle_dir='pickles',
+                 exclude:list=None, include_only:list=None, print_info=True):
         """
         Initializes a PicklePot object with a directory path.
 
@@ -23,14 +31,30 @@ class PicklePot:
 
         Parameters:
             pickle_dir (str): The directory path to load and dump pickled objects.
+
         """
+        potname = 'picklepot'
+
+        if exclude and include_only:
+            logger.warning("It doesn't make sense to set non-null values for both exclude and include_only, "
+                           "exclude will be ignored.")
+        if exclude is None:
+            exclude = []
+        self.exclude = exclude
+        self.include_only = include_only
         os.makedirs(pickle_dir, exist_ok=True)
         self.pickle_dir = pickle_dir
         self.objects = {}
+        self._ledger_path = pathlib.Path(self.pickle_dir) / f"picklepot_ledger.tsv"
         self.load_pickles()
+        if print_info:
+            try:
+                self.print_object_info()
+            except FileNotFoundError:
+                print('No ledger file found. One should be created when an object is dumped.')
+
         self.print_assign_strings(potname)
         self.potname = potname
-        self._ledger_path = pathlib.Path(self.pickle_dir)/f"picklepot_ledger.csv"
 
 
     def print_assign_strings(self, potname='picklepot'):
@@ -45,10 +69,15 @@ for k in {potname}.objects:
 """
         print(s)
 
-    def _get_latest_versions(self, files=None) -> dict[str, int]:
+    @property
+    def list_pickle_dir(self):
+
+        return os.listdir(self.pickle_dir)
+
+    @staticmethod
+    def get_latest_versions(files) -> dict[str, int]:
         """Use self.pickle_dir by default"""
-        if files is None:
-            files = os.listdir(self.pickle_dir)
+
         versions = {}
         for file in files:
             if file.endswith('.pickle'):
@@ -58,30 +87,51 @@ for k in {potname}.objects:
                     versions[obj_name] = version
         return versions
 
+    @staticmethod
+    def print_latest_pickles(path):
+        files = os.listdir(path)
+        latest = PicklePot.get_latest_versions(files)
+        for k, v in latest.items():
+            print(f"{k} - V{v}")
+
     def _write_to_ledger(self, objname, ver, info):
         ver = str(ver)
 
         with open(self._ledger_path, 'a') as f:
             d = datetime.datetime.now()
             now = f"{d.year}-{d.month}-{d.day} {d.hour}:{d.minute}"
-
+            info = info.replace('\t', '    ')
             f.write(
-                ','.join(
+                '\t'.join(
                     [objname, ver, info, now]
                 ) +'\n'
             )
 
-    def ledger(self, latest_only=False) -> pd.DataFrame:
+    def ledger(self, latest_only=False, included_only=False) -> pd.DataFrame:
         """A DataFrame of files written to the picklepot.
 
-        :parameter
-            lastest: When True, only the last written version for each
-                object name is added to the table."""
-        ledger = pd.read_csv(self._ledger_path, header=None)
+        Args:
+            latest_only: When True, include only only the last written version for each
+                object name.
+            included_only: When True, respect self.included and self.excluded. """
+        ledger = read_txt(self._ledger_path)
         ledger.columns = ['Name', 'Version', 'Info', 'Date']
+
+        if included_only:
+            m = ledger.index.map(self.is_included)
+            ledger = ledger.loc[m]
         if latest_only:
-            return ledger.loc[ledger.Name.duplicated(keep='last')]
-        return ledger.loc[ledger.duplicated(['Name', 'Version'], keep='last')]
+            return ledger.loc[~ledger.Name.duplicated(keep='last')]
+        # filter out duplicate entries resulting from overwrite_latest=True
+        return ledger.loc[~ledger.duplicated(['Name', 'Version', 'Info',], keep='last')]
+
+    def print_object_info(self, included_only=True):
+        ledge = self.ledger(included_only=included_only)
+        for name, idx in ledge.groupby('Name').groups.items():
+            print(f"{name}: ")
+            for _, row in ledge.loc[idx].iterrows():
+                print(f"\tV{row.Version}, {row.Date},   {row.Info}")
+
 
 
     def version_history(self, objname, print_it=True) -> pd.DataFrame:
@@ -96,14 +146,26 @@ for k in {potname}.objects:
 
 
     def versions(self) -> dict[str, int]:
-        return self._get_latest_versions()
+        return self.get_latest_versions(self.list_pickle_dir)
+
+    def is_included(self, obj_name):
+        """Return True if obj_name in self.include_only or not in self.exclude"""
+        if self.include_only:
+            if obj_name not in self.include_only:
+                return False
+        elif obj_name in self.exclude:
+            return False
+        return True
 
     def load_pickles(self):
         """
-        Load the latest version of pickles in PicklePot.pickle_dir to self.objects.
+        Load the latest version of pickles in PicklePot.pickle_dir to self.objects,
+        respecting self.included & self.excluded.
         """
 
         for obj_name, version in self.versions().items():
+            if not self.is_included(obj_name):
+                continue
 
             self.objects[obj_name] = self.load_obj(obj_name, version)
         print('\n')
@@ -145,7 +207,7 @@ for k in {potname}.objects:
 
         Parameters:
             obj_name (str): The name of the object to load.
-            version (int): The version number of the object to load. Defaults to 0, which loads the latest version.
+            version (int): The version number of the object to load. 0 loads the latest version.
             source_dir: Source dir, default is self.pickle_dir
 
         Returns:
@@ -155,8 +217,8 @@ for k in {potname}.objects:
             source_dir = self.pickle_dir
         if version == 0:
             try:
-                version = self._get_latest_versions(
-                    source_dir
+                version = self.get_latest_versions(
+                    os.listdir(source_dir)
                 )[obj_name]
             except KeyError:
                 raise FileNotFoundError(f"No files matching {obj_name}.n.pickle found in {source_dir}")
@@ -164,7 +226,7 @@ for k in {potname}.objects:
         try:
             with open(file_name, 'rb') as f:
                 obj = pickle.load(f)
-                print(f"Loaded {obj_name} (version {version})")
+                #print(f"Loaded {obj_name} (version {version})")
                 return obj
         except Exception as e:
             logger.warning(
@@ -173,6 +235,8 @@ for k in {potname}.objects:
 
     def __getitem__(self, item):
         return self.objects[item]
+
+
 
 
 

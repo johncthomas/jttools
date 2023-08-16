@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import scipy.stats as stats
 import statsmodels.api as sm
+import logging
 
 OLS = sm.regression.linear_model.OLS
 DFOrSeries = pd.DataFrame | pd.Series
@@ -131,9 +132,26 @@ def plot_density_scatter(
         return ax, d
     return ax
 
+def get_palette(color_factor:pd.Series, palettes:tuple=('deep', 'pastel')) -> pd.Series:
+    """Get custom colour palette for use with Seaborn plots.
+
+    Returns series with same index as color_factor and values of a colour
+    for each unique value in color_factor
+
+    Cycles through palettes in palettes"""
+    clr_cycle = itertools.cycle(
+        itertools.chain(
+            *[sns.color_palette(p) for p in palettes]
+    ))
+
+    fctrs = color_factor.unique()
+    cdict = dict(zip(fctrs, clr_cycle))
+
+    return color_factor.map(cdict)
+
 
 def factor_color_map(factors: DFOrSeries, palletes=('deep', 'pastel', 'Set2')):
-    """Get a DF of colors for each unique value, per column, in `factors`.
+    """Get a DF|Series of colors for each unique value, per column, in `factors`.
 
     Pass sample details DF, output can be passed to sns.clustermap"""
 
@@ -152,28 +170,39 @@ def factor_color_map(factors: DFOrSeries, palletes=('deep', 'pastel', 'Set2')):
         clrs = sns.color_palette(next(palletes))
         fctrs = factordf[col].unique()
         if len(fctrs) > len(clrs):
-            raise RuntimeError('Too many factors for colours available')
-        cdict = dict(zip(fctrs, clrs))
+            #raise
+            logging.warning(f'Too many factors in {col} for colours available, recyling colours.')
+        cdict = dict(zip(fctrs, itertools.cycle(clrs), ))
         factordf[col] = factordf[col].map(cdict)
     return factordf
 
 
-def plt_diagonal(ax=None, shrink=0.1, x_off=0, y_off=0, **plotkw):
+def plt_diagonal(ax=None, shrink=0.2, x_shift=0, y_shift=0, **plotkw):
     """Plot a line across most of x=y.
     Args:
         ax: pass specific ax to draw on it
-        shrink: move ends of line away from corners
-        x_off|y_off: move the line in given direction
+        shrink: move ends of line away from corners, proportion, range 0-1.
+        x_shift: shift the line on x axis
+        y_shift: shift the line on y axis
         plotkw: passed to plt.plot
     returns plt.Axes
     """
     if ax is None:
         ax = plt.gca()
 
+    # calculate shrink extent
     mn, mx = minminmaxmax(ax.get_xlim(), ax.get_ylim())
     extent = mx - mn
-    delta = extent * shrink
-    xs, ys = [mn + delta + x_off, mx - delta + x_off], [mn + delta + y_off, mx - delta + y_off]
+    delta = extent * (shrink/2)
+
+    # xy values
+    xs, ys = [
+        (
+            mn + delta + xy_off,
+            mx - delta + xy_off
+        )
+        for xy_off in (x_shift, y_shift)
+    ]
 
     kwargs = dict(ls='--', color='k') | plotkw
 
