@@ -6,11 +6,21 @@ build-backend = "setuptools.build_meta"
 name = "jttools"
 version = "0.0.1"
 dependencies = [
-    'pandas',  'plotly', 'seaborn', 'scikit-learn',
-    'scipy', 'statsmodels', 'tabulate', 'icecream'
+    'pandas',
+    'scikit-learn',
+    'scipy',
+    'statsmodels',
+    'tabulate',
+    'icecream'
 ]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 #include = ["pkg*"]  # alternatively: `exclude = ["additional*"]`
 namespaces = false
+
+[project.optional-dependencies]
+plotting = [
+    'plotly',
+    'seaborn',
+]
