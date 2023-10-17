@@ -1,4 +1,9 @@
 import itertools
+import typing
+from typing import Callable, Collection, Optional
+from pandera.typing import Series as SeriesT
+from pandera.typing import DataFrame as DataFrameT
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -7,21 +12,15 @@ import scipy.stats as stats
 import statsmodels.api as sm
 import logging
 
-OLS = sm.regression.linear_model.OLS
+from jttools.statistics import OLS
+
 DFOrSeries = pd.DataFrame | pd.Series
 
 
 def minminmaxmax(x, y):
     nn = min([min(x), min(y)])
     xx = max([max(x), max(y)])
-    return (nn, xx)
-
-
-
-def plt_match_xylims():
-    axmin, axmax = minminmaxmax(plt.xlim(), plt.ylim())
-    plt.xlim(axmin, axmax)
-    plt.ylim(axmin, axmax)
+    return nn, xx
 
 def hxbin(x, y, ax=None, **kwarghole):
     if ax is None:
@@ -49,7 +48,7 @@ def hixbin(x, y, ax=None, **hxbn_kwargs):
     ax.hexbin(x, y, **kwargs)
 
 
-def prep_data_for_upsetplot(bool_table):
+def prep_data_for_upsetplot(bool_table:pd.DataFrame):
     """UpSetPlot (for displaying intersection sizes) requires data to be
     formated in a very specific way. This does that.
     Expects a table of bools with columns being the samples"""
@@ -176,6 +175,30 @@ def factor_color_map(factors: DFOrSeries, palletes=('deep', 'pastel', 'Set2')):
         factordf[col] = factordf[col].map(cdict)
     return factordf
 
+def resize_line(x0:float, x1:float, y0:float, y1:float, proportion) \
+        -> tuple[float, float, float, float]:
+    """Reduce or increase the size of a line. Can be used for axes
+    limits as well."""
+    # Calculate the midpoint of the line
+    mid_x = (x0 + x1) / 2
+    mid_y = (y0 + y1) / 2
+
+    # Calculate the direction vector
+    dir_vector_x = (x1 - x0) / 2
+    dir_vector_y = (y1 - y0) / 2
+
+    # Multiply direction vector by half of the desired length
+    dir_vector_x *= proportion
+    dir_vector_y *= proportion
+
+    # Calculate new endpoints based on the midpoint and modified direction vector
+    new_x0 = mid_x - dir_vector_x
+    new_x1 = mid_x + dir_vector_x
+    new_y0 = mid_y - dir_vector_y
+    new_y1 = mid_y + dir_vector_y
+
+    return new_x0, new_x1, new_y0, new_y1
+
 
 def plt_diagonal(ax=None, shrink=0.2, x_shift=0, y_shift=0, **plotkw):
     """Plot a line across most of x=y.
@@ -208,3 +231,146 @@ def plt_diagonal(ax=None, shrink=0.2, x_shift=0, y_shift=0, **plotkw):
 
     ax.plot(xs, ys, **kwargs)
     return ax
+
+
+def plt_line(x=None, y=None, ax=None, **plotkwargs):
+    """Plot horizontal or vertical line across the axis length.
+
+    kwargs passed to plt.plot.
+
+    Axes do not get expanded by lines, so lines may be outside the drawn area.
+    """
+    if (x is None) and (y is None):
+        raise ValueError("Set a value for x and/or y")
+
+    if ax is None:
+        ax = plt.gca()
+
+    xlims = ax.get_xlim()
+    ylims = ax.get_ylim()
+
+    plotkwargs = dict(ls='dashed', color='k', lw=0.7) | plotkwargs
+
+    if x is not None:
+        ax.plot([x, x], [ylims[0], ylims[1]], **plotkwargs)
+
+    if y is not None:
+        ax.plot([xlims[0], xlims[1]], [y, y], **plotkwargs)
+
+    ax.set_ylim(ylims)
+    ax.set_xlim(xlims)
+
+
+def plt_expand_axlims(xamount: float = 0.1, yamount: Optional[float] = None, ax=None) -> None:
+    if yamount is None:
+        yamount = xamount
+
+    if ax is None:
+        ax = plt.gca()
+
+    for getlim, setlim, amount in [
+        (ax.get_xlim, ax.set_xlim, xamount),
+        (ax.get_ylim, ax.set_ylim, yamount)
+    ]:
+        mn, mx = getlim()
+
+        d = (mx - mn) * amount / 2
+        setlim(mn - d, mx + d)
+
+
+def plot_qq(values: np.ndarray,
+            distribution=stats.norm,
+            scale_values: Callable = lambda v: v / np.std(v),
+            ax: plt.Axes = None
+    ) -> plt.Axes:
+    """Quantile-quantile plot.
+
+    Args:
+        values: An array of values, e.g. residuals
+        distribution: Distribution to draw quantiles from. Requires ppf method. You
+            can initiate scipy.stats distributions objects here if you want specific
+            params.
+        scale_values: If a function, apply to values before generating the quantiles.
+            Defaults to norm by std. Otherwise use raw values.
+        ax: pyplot Axes to use
+    """
+    if ax is None:
+        plt.figure(figsize=(4, 4))
+        ax = plt.gca()
+
+    n = values.shape[0]
+
+    perc = np.linspace(0, 100, n)
+
+    if isinstance(scale_values, Callable):
+        values = scale_values(values)
+
+    values = np.sort(values)
+
+    # Calculate the quantiles for a standard normal distribution
+    even = distribution.ppf(np.linspace(1 / n, 1 - 1 / n, n))
+
+    normal_quantiles = np.percentile(even, perc)
+
+    ax.scatter(normal_quantiles, values, )
+    plt_diagonal(color='red', ax=ax)
+    plt_labels('Theoretical quantiles', 'Sorted values', 'Quantile-quantile')
+    return ax
+
+
+def plt_annotate_adjust(
+        x: SeriesT[float],
+        y: SeriesT[float],
+        text: Collection[str],
+        arrowstyle: Optional[str] = '-',
+        arrowcolor: str = 'k',
+        textkwargs: Optional[dict] = None,
+        adjustkwargs: Optional[dict] = None,
+        ax: Optional[plt.Axes] = None,
+):
+    """Annotate points in x & y with text, and adjust their positions to
+    prevent overlaps.
+
+    If values of text are indicies of x & y, text will be used to get the
+    positions. Otherwise; x, y & text are zipped and iterated through.
+
+    textkwargs passed to plt.text.
+    adjustkwargs to adjustText.adjust_text
+
+    Set arrowstyle to None to remove arrow."""
+    from adjustText import adjust_text
+    if ax is None:
+        ax = plt.gca()
+
+    default_textkwargs = {
+        'fontsize':'x-small',
+        'bbox':{'facecolor':'white',
+                'boxstyle':'square,pad=0',
+                'alpha':.6}
+    }
+    if textkwargs is None:
+        textkwargs = default_textkwargs
+    else:
+        textkwargs = default_textkwargs|textkwargs
+
+    if adjustkwargs is None:
+        adjustkwargs = {}
+
+    if arrowstyle is not None:
+        # adjustkwargs values take precident
+        adjustkwargs = dict(arrowstyle=arrowstyle, color=arrowcolor) | adjustkwargs
+
+    if isinstance(x, pd.Series) and all([ss in x.index for ss in text]):
+        annotes = [ax.text(x[s], y[s], s, **textkwargs) for s in text]
+    else:
+        assert len(x) == len(y) == len(text)
+        annotes = [ax.text(xx, yy, s, **textkwargs) for (xx, yy, s) in zip(x, y, text)]
+
+    adjust_text(annotes, x, y, **adjustkwargs)
+
+    return annotes
+
+def plt_match_xylims():
+    axmin, axmax = minminmaxmax(plt.xlim(), plt.ylim())
+    plt.xlim(axmin, axmax)
+    plt.ylim(axmin, axmax)

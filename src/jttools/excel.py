@@ -1,6 +1,7 @@
 import logging
 import os
 import pathlib
+import math
 
 import pandas as pd
 import xlsxwriter
@@ -12,25 +13,40 @@ from typing import Callable, TypedDict, NewType
 
 from pandas.api.types import is_float_dtype, is_integer_dtype, is_string_dtype
 
-
-
 ColStr = str
+
+import logging
+logging.basicConfig()
+logger = logging.getLogger(__name__)
+
+from icecream import ic
+ic.disable()
+
+__all__ = ['add_info_sheet', 'conditional_format_definitions', 'add_stats_worksheet',
+           'write_stats_workbook', 'ROWMAX', 'COLMAX']
 
 # useful for selecting an entire row/col (this is the recommended method...)
 ROWMAX = 1048575
 COLMAX = 16383
 
-from icecream import ic
-ic.disable()
-
-
-__all__ = ['add_vert_info_sheet', 'conditional_format_definitions', 'add_stats_worksheet',
-           'write_stats_workbook']
-
 def open_wb(wb: Workbook | str | os.PathLike) -> Workbook:
     if isinstance(wb, Workbook):
         return wb
     return Workbook(wb)
+
+# def ignore_nan(worksheet, row, col, number, format=None):
+#     """This should be added to a worksheet using:
+#     worksheet.add_write_handler(float, ignore_nan)"""
+#     if math.isnan(number):
+#         return worksheet.write_blank(row, col, None, format)
+#     else:
+#         # Return control to the calling write() method for any other number.
+#         return None
+#
+# # # Set up the workbook as usual.
+# # workbook = xlsxwriter.Workbook("user_types2.xlsx")
+# # worksheet = workbook.add_worksheet()
+# # worksheet.add_write_handler()
 
 def add_row_title_fmt(wb:Workbook, **format_kwargs) -> Format:
     """Add xlsxwriter Format to workbook and return it."""
@@ -54,11 +70,13 @@ def add_wrapped_text_fmt(wb:Workbook, **format_kwargs) -> Format:
         align='vcenter',
         text_wrap=True,
         num_format='@'
-    ))
+
+    ) | format_kwargs)
+
     return text_fmt
 
-def add_vert_info_sheet(wb:Workbook, info_dict: dict[str, str] | str,
-                        sheet_name='Info') -> Worksheet:
+def add_info_sheet(wb:Workbook, info_dict: dict[str, str] | str,
+                   sheet_name='Info') -> Worksheet:
     """Write sheet with information arranged with first column giving
     title of info and 2nd col giving text.
 
@@ -109,7 +127,7 @@ class ThreeColorScaleFmt(TypedDict):
     max_color:str
 
 class conditional_format_definitions:
-    """Methods returning default values as dicts for conditional formats,
+    """Static methods returning default values as dicts for conditional formats,
     pass the dict to:
 
     conditional_format_columns(**kw, format={'column':<formatdict>})
@@ -149,7 +167,7 @@ class conditional_format_definitions:
             mid_value=0.1,
             max_value=0.2,
             min_color ='#92D050',
-            mid_color ='#FFEB84',
+            mid_color ='#FFFF00',
             max_color = '#FFFFFF',
             min_type='num',
             mid_type='num',
@@ -157,29 +175,32 @@ class conditional_format_definitions:
         )
 
 
-def number_format_columns(
-    workbook:xlsxwriter.Workbook,
-    df:pd.DataFrame,
-    num_formats: dict[ColStr, str] = None,
-    auto_formats=True,
+def format_columns(
+        workbook:xlsxwriter.Workbook,
+        df:pd.DataFrame,
+        col_formats: dict[ColStr, dict[str, typing.Any]] = None,
+        auto_formats=True,
 ) -> dict[ColStr, dict]:
-    """Get dict of column definitions. Should be
+    """Get dict of column definitions.
 
-    use num_formats to specify specific formats"""
-    num_formats = {} if num_formats is None else num_formats
+    use num_formats to specify specific formats. Dictionaries passed to
+    xlsxwriter WB.add_format()"""
 
-    # this results in the same formats being added to the workbook
-    #  multiple times, but I can't find an elegant way to avoid it
-    #  (like, creating Format directly and passing it to add_format
-    #  doesn't work even if you convert it to a dict first) that definitely
-    #  wouldn't cause issues in the future,
-    #  but hopefully it doesn't cause issues...
+    col_formats = {} if col_formats is None else col_formats
+
     int_format = workbook.add_format({'num_format': '0'})
     float_format = workbook.add_format({'num_format': '0.00'})
     text_format = workbook.add_format({'num_format': '@', })
 
-    num_formats = {col: workbook.add_format({'num_format': f})
-                   for col, f in set(num_formats.items())}
+    # The trick here is that we need to call workbook.add_format to get the
+    #   proper format obj (can't create one from the class directly that works),
+    #   so we'll tuplize the format dictionaries and keep track of the returned
+    #   Format objects.
+
+    # This should be safe, the dicts shouldn't contain any unhashables.
+    # If not use IDs as keys.
+    dict_to_tupes = lambda d: tuple(sorted(list(d.items())))
+    added_formats = {}
 
     tab_columns = {}
     for col, dtype in df.dtypes.items():
@@ -187,8 +208,13 @@ def number_format_columns(
         cold = {'header': col}
 
         fmt = False
-        if col in num_formats:
-            fmt = num_formats[col]
+        if col in col_formats:
+            fmt_d = col_formats[col]
+            fmt_k = dict_to_tupes(fmt_d)
+            if fmt_k not in added_formats:
+                fmt = workbook.add_format(fmt_d)
+            else:
+                fmt = added_formats[fmt_k]
         elif auto_formats:
             if is_float_dtype(dtype):
                 fmt = float_format
@@ -199,7 +225,7 @@ def number_format_columns(
 
         if fmt:
             cold['format'] = fmt
-        ic(cold)
+        #ic(cold)
         tab_columns[col] = cold
     return tab_columns
 
@@ -217,17 +243,17 @@ def conditional_format_columns(
     df_columns = list(df_columns)
     for col, fmt in formats.items():
         coli = df_columns.index(col)+1
+        ic(fmt)
         worksheet.conditional_format(
             0, coli, ROWMAX, coli, fmt
         )
 
 def add_stats_worksheet(
-    workbook: xlsxwriter.Workbook | str | os.PathLike,
-    table: pd.DataFrame,
-    sheet_name: str,
-    column_definitions:dict[ColStr, dict]=None,
-
-    xlsx_table_opts: dict = None,
+        workbook: xlsxwriter.Workbook | str | os.PathLike,
+        table: pd.DataFrame,
+        sheet_name: str,
+        column_definitions:dict[ColStr, dict]=None,
+        xlsx_table_opts: dict = None,
 ) -> Worksheet:
 
     workbook = open_wb(workbook)
@@ -238,9 +264,9 @@ def add_stats_worksheet(
     if xlsx_table_opts is None:
         xlsx_table_opts = {}
 
-
     sheet_name = sheet_name
-    worksheet: Worksheet = workbook.add_worksheet(name=sheet_name)
+    worksheet: Worksheet = workbook.add_worksheet(name=sheet_name, )
+    worksheet.nan_inf_to_errors = True
 
     # excel table does not include df.index by default
     # If it's a range index we don't want to write it,
@@ -273,17 +299,40 @@ def add_stats_worksheet(
     return worksheet
 
 def write_stats_workbook(
-    workbook:Workbook|str|os.PathLike,
-    tables: dict[str, pd.DataFrame]|pd.DataFrame,
-    auto_num_formats=True,
-    extra_num_formats:dict[ColStr, str]=None,
-    conditional_formats:dict[ColStr, dict]=None,
-    close_workbook=True,
-    drop_empty_rows=True,
-    xlsx_table_opts:dict=None,
-    xlsx_table_opts_per_sheet: dict[str, dict] = None,
+        workbook:Workbook|str|os.PathLike,
+        tables: dict[str, pd.DataFrame]|pd.DataFrame,
+        auto_num_formats=True,
+        extra_num_formats:dict[ColStr, str]=None,
+        other_formats:dict[ColStr, dict]=None,
+        conditional_formats:dict[ColStr, dict]=None,
+        close_workbook=True,
+        xlsx_table_opts:dict=None,
+        xlsx_table_opts_per_sheet: dict[str, dict] = None,
 ):
-    """Writes DF in sheets as tables to tabs in an excel workbook."""
+    """Writes DF in sheets as tables to tabs in an excel workbook.
+
+    Per column options apply to all sheets with that column name.
+
+    Args:
+        workbook: xlsxwriter Workbook class or path to where WB should be opened.
+        tables: A single table or multiple can be passed as a dictionary,
+            keys defining sheet names (so they need to follow Excel rules for that.)
+        auto_num_formats: Use DF.dtypes to auto define and apply Excel formatting
+            (including formatting `obj` as text)
+        extra_num_formats: Number format per column, value should be an Excel format
+            string, what you see as "example" when customising formats.
+        other_formats: Dict of cell formats per column.
+            e.g.: {'LongTextCol':{'num_format':'@', 'text_wrap':True}}
+            See: https://xlsxwriter.readthedocs.io/format.html (nice table half way down)
+        conditional_formats: Conditional format per column. Some available as
+            conditional_format_definitions.<method>(), or define a dict.
+            See: https://xlsxwriter.readthedocs.io/working_with_conditional_formats.html
+        close_workbook: WB is written upon closing, set to False to continue working on
+            the open WB.
+        xlsx_table_opts: See https://xlsxwriter.readthedocs.io/working_with_tables.html
+        xlsx_table_opts_per_sheet:
+            See https://xlsxwriter.readthedocs.io/working_with_tables.html
+    """
 
     workbook = open_wb(workbook)
 
@@ -306,17 +355,43 @@ def write_stats_workbook(
         sheet_names = tables.keys()
 
     for sheet_name in sheet_names:
+
         if sheet_name in xlsx_table_opts_per_sheet:
             sheet_opts = xlsx_table_opts | xlsx_table_opts_per_sheet[sheet_name]
         else:
             sheet_opts = xlsx_table_opts
         tab = tables[sheet_name]
+        #print(tab.head())
 
-        number_formats = number_format_columns(
+        def filter_to_available_cols(d:dict|None) -> dict:
+            if d is None:
+                return {}
+            return {col: v for col, v in d.items() if col in tab.columns}
+
+        if extra_num_formats is not None:
+            num_formats = {col:{'num_format': f}
+                           for col, f in extra_num_formats.items()}
+        else:
+            num_formats = {}
+
+        if other_formats is None:
+            other_formats = {}
+
+        # join the formatting dictionaries
+        keys = set()
+
+        keys.update(num_formats.keys())
+        keys.update(other_formats.keys())
+
+        column_formats = {}
+        for col in keys:
+            column_formats[col] = num_formats.get(col, {}) | other_formats.get(col, {})
+
+        number_formats = format_columns(
             workbook,
             tab,
-            extra_num_formats,
-            auto_num_formats
+            col_formats=column_formats,
+            auto_formats=auto_num_formats,
         )
 
         sheet = add_stats_worksheet(
@@ -324,11 +399,11 @@ def write_stats_workbook(
             tab,
             sheet_name,
             column_definitions=number_formats,
-            drop_na_rows=drop_empty_rows,
             xlsx_table_opts=sheet_opts,
         )
 
         if conditional_formats:
+            ic(conditional_formats)
             conditional_format_columns(
                 worksheet=sheet,
                 formats=conditional_formats,
@@ -340,181 +415,17 @@ def write_stats_workbook(
     return workbook
 
 def _test():
-
-    # data
-    test_data = {'00nM': {'LFC': {'RLA0_P05388_50': 0.8688471880046018,
-       'MFAP3_P55082_219': 0.19358790662551417,
-       'PRKDC_P78527_824': -0.21253595333269892,
-       'ABCD3_P28288_260': 0.16619306725573324,
-       'PA2G4_Q9UQ80_287': 0.0767043168285726,
-       'UB2R2_Q712K3_167': -0.08322290529507548,
-       'RS15_P62841_65': 0.47915986219714224,
-       'RS27A_P62979_89': 0.272159532569356,
-       'NAF1_Q96HR8_172': -0.06664983797016344,
-       'TPR_P12270_463': -0.19953959571059254},
-      'Expr': {'RLA0_P05388_50': 7.915942931537074,
-       'MFAP3_P55082_219': 8.040632690275782,
-       'PRKDC_P78527_824': 6.308567919439216,
-       'ABCD3_P28288_260': 6.935404840129473,
-       'PA2G4_Q9UQ80_287': 6.913402237993912,
-       'UB2R2_Q712K3_167': 5.956775159225586,
-       'RS15_P62841_65': 5.479334777003339,
-       'RS27A_P62979_89': 7.086846837017442,
-       'NAF1_Q96HR8_172': 6.620867074448822,
-       'TPR_P12270_463': 5.647648322628092},
-      'p': {'RLA0_P05388_50': 1.2770378903979727e-05,
-       'MFAP3_P55082_219': 0.19424579690219598,
-       'PRKDC_P78527_824': 0.15829370431753703,
-       'ABCD3_P28288_260': 0.19440047290467188,
-       'PA2G4_Q9UQ80_287': 0.6165331013683086,
-       'UB2R2_Q712K3_167': 0.6129617901639373,
-       'RS15_P62841_65': 0.0028088592006240655,
-       'RS27A_P62979_89': 0.11290906572421838,
-       'NAF1_Q96HR8_172': 0.5812291302533621,
-       'TPR_P12270_463': 0.12323413399501641},
-      'FDR': {'RLA0_P05388_50': 0.03915398171960184,
-       'MFAP3_P55082_219': 0.9992272153953043,
-       'PRKDC_P78527_824': 0.9992272153953043,
-       'ABCD3_P28288_260': 0.9992272153953043,
-       'PA2G4_Q9UQ80_287': 0.9992272153953043,
-       'UB2R2_Q712K3_167': 0.9992272153953043,
-       'RS15_P62841_65': 0.8898925533983435,
-       'RS27A_P62979_89': 0.9992272153953043,
-       'NAF1_Q96HR8_172': 0.9992272153953043,
-       'TPR_P12270_463': 0.9992272153953043},
-      'GeneSymbol': {'RLA0_P05388_50': 'RPLP0',
-       'MFAP3_P55082_219': 'MFAP3',
-       'PRKDC_P78527_824': 'PRKDC',
-       'ABCD3_P28288_260': 'ABCD3',
-       'PA2G4_Q9UQ80_287': 'PA2G4',
-       'UB2R2_Q712K3_167': 'UBE2R2',
-       'RS15_P62841_65': 'RPS15',
-       'RS27A_P62979_89': 'RPS27A',
-       'NAF1_Q96HR8_172': 'NAF1',
-       'TPR_P12270_463': 'TPR'},
-      'Description': {'RLA0_P05388_50': '60S acidic ribosomal protein P0 OS=Homo sapiens OX=9606 GN=RPLP0 PE=1 SV=1',
-       'MFAP3_P55082_219': 'Microfibril-associated glycoprotein 3 OS=Homo sapiens OX=9606 GN=MFAP3 PE=1 SV=1',
-       'PRKDC_P78527_824': 'DNA-dependent protein kinase catalytic subunit OS=Homo sapiens OX=9606 GN=PRKDC PE=1 SV=3',
-       'ABCD3_P28288_260': 'ATP-binding cassette sub-family D member 3 OS=Homo sapiens OX=9606 GN=ABCD3 PE=1 SV=1',
-       'PA2G4_Q9UQ80_287': 'Proliferation-associated protein 2G4 OS=Homo sapiens OX=9606 GN=PA2G4 PE=1 SV=3',
-       'UB2R2_Q712K3_167': 'Ubiquitin-conjugating enzyme E2 R2 OS=Homo sapiens OX=9606 GN=UBE2R2 PE=1 SV=1',
-       'RS15_P62841_65': '40S ribosomal protein S15 OS=Homo sapiens OX=9606 GN=RPS15 PE=1 SV=2',
-       'RS27A_P62979_89': 'Ubiquitin-40S ribosomal protein S27a OS=Homo sapiens OX=9606 GN=RPS27A PE=1 SV=2',
-       'NAF1_Q96HR8_172': 'H/ACA ribonucleoprotein complex non-core subunit NAF1 OS=Homo sapiens OX=9606 GN=NAF1 PE=1 SV=2',
-       'TPR_P12270_463': 'Nucleoprotein TPR OS=Homo sapiens OX=9606 GN=TPR PE=1 SV=3'},
-      'HGNCID': {'RLA0_P05388_50': 'HGNC:10371',
-       'MFAP3_P55082_219': 'HGNC:7034',
-       'PRKDC_P78527_824': 'HGNC:9413',
-       'ABCD3_P28288_260': 'HGNC:67',
-       'PA2G4_Q9UQ80_287': 'HGNC:8550',
-       'UB2R2_Q712K3_167': 'HGNC:19907',
-       'RS15_P62841_65': 'HGNC:10388',
-       'RS27A_P62979_89': 'HGNC:10417',
-       'NAF1_Q96HR8_172': 'HGNC:25126',
-       'TPR_P12270_463': 'HGNC:12017'},
-      'UniprotID': {'RLA0_P05388_50': 'P05388',
-       'MFAP3_P55082_219': 'P55082',
-       'PRKDC_P78527_824': 'P78527',
-       'ABCD3_P28288_260': 'P28288',
-       'PA2G4_Q9UQ80_287': 'Q9UQ80',
-       'UB2R2_Q712K3_167': 'Q712K3',
-       'RS15_P62841_65': 'P62841',
-       'RS27A_P62979_89': 'P62979',
-       'NAF1_Q96HR8_172': 'Q96HR8',
-       'TPR_P12270_463': 'P12270'}},
-     '_1uM': {'LFC': {'RLA0_P05388_50': 2.1183969255068646,
-       'MFAP3_P55082_219': 0.17095923114560474,
-       'PRKDC_P78527_824': -0.04388346209771843,
-       'ABCD3_P28288_260': 0.7119694016197817,
-       'PA2G4_Q9UQ80_287': -0.1420110383395201,
-       'UB2R2_Q712K3_167': -0.3327212863176685,
-       'RS15_P62841_65': 2.3834083415659295,
-       'RS27A_P62979_89': 0.640275240420082,
-       'NAF1_Q96HR8_172': -0.21973203948955788,
-       'TPR_P12270_463': -0.19989017522914398},
-      'Expr': {'RLA0_P05388_50': 7.915942931537074,
-       'MFAP3_P55082_219': 8.040632690275782,
-       'PRKDC_P78527_824': 6.308567919439216,
-       'ABCD3_P28288_260': 6.935404840129473,
-       'PA2G4_Q9UQ80_287': 6.913402237993912,
-       'UB2R2_Q712K3_167': 5.956775159225586,
-       'RS15_P62841_65': 5.479334777003339,
-       'RS27A_P62979_89': 7.086846837017442,
-       'NAF1_Q96HR8_172': 6.620867074448822,
-       'TPR_P12270_463': 5.647648322628092},
-      'p': {'RLA0_P05388_50': 2.0638619148096507e-11,
-       'MFAP3_P55082_219': 0.24922784497820819,
-       'PRKDC_P78527_824': 0.764747155240887,
-       'ABCD3_P28288_260': 1.7186988493746083e-05,
-       'PA2G4_Q9UQ80_287': 0.35789189575377145,
-       'UB2R2_Q712K3_167': 0.0542165667878174,
-       'RS15_P62841_65': 1.0597786162157583e-12,
-       'RS27A_P62979_89': 0.0009874403172407393,
-       'NAF1_Q96HR8_172': 0.08037061894199579,
-       'TPR_P12270_463': 0.12261871188289274},
-      'FDR': {'RLA0_P05388_50': 4.2185337538709264e-08,
-       'MFAP3_P55082_219': 0.6204580555702286,
-       'PRKDC_P78527_824': 0.9189995892779093,
-       'ABCD3_P28288_260': 0.0023952412146284316,
-       'PA2G4_Q9UQ80_287': 0.710224305748261,
-       'UB2R2_Q712K3_167': 0.3303620380518885,
-       'RS15_P62841_65': 6.49856247463503e-09,
-       'RS27A_P62979_89': 0.036475807381447074,
-       'NAF1_Q96HR8_172': 0.3842157357746917,
-       'TPR_P12270_463': 0.46005022019901093},
-      'GeneSymbol': {'RLA0_P05388_50': 'RPLP0',
-       'MFAP3_P55082_219': 'MFAP3',
-       'PRKDC_P78527_824': 'PRKDC',
-       'ABCD3_P28288_260': 'ABCD3',
-       'PA2G4_Q9UQ80_287': 'PA2G4',
-       'UB2R2_Q712K3_167': 'UBE2R2',
-       'RS15_P62841_65': 'RPS15',
-       'RS27A_P62979_89': 'RPS27A',
-       'NAF1_Q96HR8_172': 'NAF1',
-       'TPR_P12270_463': 'TPR'},
-      'Description': {'RLA0_P05388_50': '60S acidic ribosomal protein P0 OS=Homo sapiens OX=9606 GN=RPLP0 PE=1 SV=1',
-       'MFAP3_P55082_219': 'Microfibril-associated glycoprotein 3 OS=Homo sapiens OX=9606 GN=MFAP3 PE=1 SV=1',
-       'PRKDC_P78527_824': 'DNA-dependent protein kinase catalytic subunit OS=Homo sapiens OX=9606 GN=PRKDC PE=1 SV=3',
-       'ABCD3_P28288_260': 'ATP-binding cassette sub-family D member 3 OS=Homo sapiens OX=9606 GN=ABCD3 PE=1 SV=1',
-       'PA2G4_Q9UQ80_287': 'Proliferation-associated protein 2G4 OS=Homo sapiens OX=9606 GN=PA2G4 PE=1 SV=3',
-       'UB2R2_Q712K3_167': 'Ubiquitin-conjugating enzyme E2 R2 OS=Homo sapiens OX=9606 GN=UBE2R2 PE=1 SV=1',
-       'RS15_P62841_65': '40S ribosomal protein S15 OS=Homo sapiens OX=9606 GN=RPS15 PE=1 SV=2',
-       'RS27A_P62979_89': 'Ubiquitin-40S ribosomal protein S27a OS=Homo sapiens OX=9606 GN=RPS27A PE=1 SV=2',
-       'NAF1_Q96HR8_172': 'H/ACA ribonucleoprotein complex non-core subunit NAF1 OS=Homo sapiens OX=9606 GN=NAF1 PE=1 SV=2',
-       'TPR_P12270_463': 'Nucleoprotein TPR OS=Homo sapiens OX=9606 GN=TPR PE=1 SV=3'},
-      'HGNCID': {'RLA0_P05388_50': 'HGNC:10371',
-       'MFAP3_P55082_219': 'HGNC:7034',
-       'PRKDC_P78527_824': 'HGNC:9413',
-       'ABCD3_P28288_260': 'HGNC:67',
-       'PA2G4_Q9UQ80_287': 'HGNC:8550',
-       'UB2R2_Q712K3_167': 'HGNC:19907',
-       'RS15_P62841_65': 'HGNC:10388',
-       'RS27A_P62979_89': 'HGNC:10417',
-       'NAF1_Q96HR8_172': 'HGNC:25126',
-       'TPR_P12270_463': 'HGNC:12017'},
-      'UniprotID': {'RLA0_P05388_50': 'P05388',
-       'MFAP3_P55082_219': 'P55082',
-       'PRKDC_P78527_824': 'P78527',
-       'ABCD3_P28288_260': 'P28288',
-       'PA2G4_Q9UQ80_287': 'Q9UQ80',
-       'UB2R2_Q712K3_167': 'Q712K3',
-       'RS15_P62841_65': 'P62841',
-       'RS27A_P62979_89': 'P62979',
-       'NAF1_Q96HR8_172': 'Q96HR8',
-       'TPR_P12270_463': 'P12270'}}}
-
-
-
-    tt = {k:pd.DataFrame(v) for k, v in test_data.items()}
-    test_tables = {}
+    ks = ['00nM', '_1uM']
+    fn = '/home/jthomas/pycharm/JTtools/test_data/test_data_{}.csv'
+    test_tables = {k:pd.read_csv(fn.format(k), index_col=0) for k in ks}
 
     cnd_fmts = {
         'LFC':conditional_format_definitions.score(2),
         'FDR':conditional_format_definitions.significance(),
     }
 
-    # ic(cnd_fmts)
-    ic.enable()
+    ic(cnd_fmts)
+
     logging.info('Testing writing multiple sheets, conditional formating, '
                  'auto num formatting, manual numformatting, table options'
                  ' and per sheet table options', )
@@ -529,7 +440,7 @@ def _test():
             'other': 'hey here is more text wow' * 50}
 
     wb = xlsxwriter.Workbook('/mnt/m/tmp/formatted.1.xlsx')
-    add_vert_info_sheet(wb, info, )
+    add_info_sheet(wb, info, )
     write_stats_workbook(tables=test_tables,
                          workbook=wb,
                          conditional_formats=cnd_fmts,
@@ -539,4 +450,32 @@ def _test():
                          )
 
 if __name__ == '__main__':
-    _test()
+    pass
+    #
+    # wrapped = dict(text_wrap=True, num_format='@')
+    # cond_formats = conditional_format_definitions
+    # gsea_table = pd.read_csv('/mnt/m/tmp/x.xlsx', index_col=0)
+    # score = 'p10'
+    # for trt in gsea_table.Comparison.unique():
+    #     t = gsea_table.loc[(gsea_table.Comparison == trt) & (gsea_table.Score == score)].drop('Score', axis=1)
+    #     t = t.sort_values('FDR', )
+    #     wb = write_stats_workbook(
+    #         # f'out/Excel workbooks/GSEA.{trt}.{score}.xlsx',\\
+    #         '/mnt/m/tmp/test.xlsx',
+    #         {'Results': t},
+    #         conditional_formats={
+    #             'ES': cond_formats.score(t.ES.abs().max()),
+    #             'NES': cond_formats.score(t.NES.abs().max()),
+    #             'FDR': cond_formats.significance(),
+    #             'FWER': cond_formats.significance(),
+    #         },
+    #         other_formats={'Term': wrapped},
+    #         close_workbook=False,
+    #     )
+    #
+    #     wb: xlsxwriter.Workbook
+    #     sheet: Worksheet = wb.get_worksheet_by_name('Results')
+    #     # plus 1 cus index
+    #     term_i = list(t.columns).index('Term') + 1
+    #     sheet.set_column_pixels(term_i, term_i, width=500)
+    #     wb.close()

@@ -1,12 +1,13 @@
 
 import platform, pathlib
 import os
-from typing import Dict, List, Union, Tuple
+from typing import Dict, List, Union, Tuple, Optional
 import typing
 import itertools
 from itertools import combinations, combinations_with_replacement
 # import attrdict
 import collections
+import importlib
 from copy import copy, deepcopy
 
 import pandas as pd
@@ -21,9 +22,8 @@ import seaborn as sns
 import scipy.stats as stats
 import yaml
 from functools import partial
-
-
 import logging
+
 
 from IPython.display import display
 from pathlib import Path
@@ -51,12 +51,26 @@ from jttools.plotting import *
 
 monkey_patch_dataframe(pd)
 
+from to_precision import to_precision
+
 AMap = AttrMapAC
 
 rpy2_magic_cmd = '%reload_ext rpy2.ipython'
 
 revcomp = lambda s: ''.join([dict(zip('ACTGN', 'TGACN'))[nt] for nt in s[::-1]])
-sns.set(style='whitegrid', context='paper')
+sns.set_theme(
+    style='whitegrid',
+    context='paper',
+    rc={
+        'figure.dpi':150,
+        'figure.figsize': (5, 3.75),
+        'savefig.bbox':'tight', # expands canvas to fit all the image
+        'hist.bins': 20,
+        'ytick.labelsize':'x-small',
+        'xtick.labelsize':'x-small',
+        'axes.labelsize':'small',
+    }
+)
 
 ### USEFUL GLOBALS
 computer_name = platform.node()
@@ -77,9 +91,6 @@ else:
 csv_encoding_with_bom = 'utf-8-sig'
 
 DFOrSeries = pd.DataFrame | pd.Series
-
-
-
 
 def windows_to_unix_path(p: str, onedrive='OneDrive - MISSION Therapeutics Ltd'):
     p = p.replace('\\', '/')

@@ -33,7 +33,7 @@ class PicklePot:
             pickle_dir (str): The directory path to load and dump pickled objects.
 
         """
-        potname = 'picklepot'
+        potname = 'pp'
 
         if exclude and include_only:
             logger.warning("It doesn't make sense to set non-null values for both exclude and include_only, "
@@ -114,6 +114,7 @@ for k in {potname}.objects:
             latest_only: When True, include only only the last written version for each
                 object name.
             included_only: When True, respect self.included and self.excluded. """
+        # todo seems to include excluded items.
         ledger = read_txt(self._ledger_path)
         ledger.columns = ['Name', 'Version', 'Info', 'Date']
 
@@ -153,7 +154,7 @@ for k in {potname}.objects:
         if self.include_only:
             if obj_name not in self.include_only:
                 return False
-        elif obj_name in self.exclude:
+        if obj_name in self.exclude:
             return False
         return True
 

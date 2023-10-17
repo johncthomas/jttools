@@ -19,11 +19,35 @@ __all__ = [
     'write_stats_workbook', 'df_underscore_columns', 'index_of_true', 'keys_crawler', 'unify_indicies',
     'df_rename_columns', 'format_vertical_headers', 'format_p_table_for_display', 'write_list', 'iterate_groups',
     'tidy_to_map', 'str_remove_consecutive', 'df_from_str', 'df_set_index_dropping_dupes',
-    'monkey_patch_dataframe'
+    'monkey_patch_dataframe', 'load_latest_pyensembl_release'
 ]
 
 OLS = sm.regression.linear_model.OLS
 is_numeric = pd.api.types.is_numeric_dtype
+
+
+def load_latest_pyensembl_release(**kwargs):
+    """kwargs passed to pyensembl.EnsembleRelease(i, **kw)"""
+    from pyensembl import EnsemblRelease
+    ensembl = None
+    for i in range(300, 55, -1):
+        try:
+            ensembl = EnsemblRelease(i, **kwargs)
+            ensembl.contigs()
+            print('Ensembl release', i)
+            break
+        except:
+            pass
+    if ensembl is None:
+        print('No ensembl DB found')
+        return None
+
+    return ensembl
+
+
+
+
+from typing import Callable
 
 class AttrMapAC(AttrMap):
     """Tab completable AttrMap"""
@@ -33,7 +57,7 @@ class AttrMapAC(AttrMap):
             print(thing)
 
     def __dir__(self):
-        super_dir = super().__dir__()
+        super_dir:list[str] = super().__dir__()
         string_keys = [str(key) for key in self if isinstance(key, str)]
         return super_dir + [key for key in string_keys if key not in super_dir]
 
@@ -45,6 +69,8 @@ class AttrMapAC(AttrMap):
             if dict2attrmap and (type(v) is dict):
                 v = AttrMapAC(v)
             yield k, v
+
+
 
 
 def list_not_str(thing):
@@ -489,5 +515,22 @@ def df_from_str(string:str, sep:str, header=True, index_col:int=None,
 
     return df
 
+def _test_write_stats_workbook():
+    print("Testing write stats workbook. Just basic.")
+    df = pd.read_csv('/home/jthomas/pycharm/JTtools/test_data/df_of_types.csv')
+    print(df)
+    testfn = '/home/jthomas/pycharm/JTtools/test_data/test.out'
+    write_stats_workbook(testfn, {'sheet':df})
+    df2 = pd.read_excel(testfn, sheet_name=0)
+    print(df2)
 
 
+if __name__ == '__main__':
+    _test_write_stats_workbook()
+    #
+    # df = pd.read_csv('/mnt/m/tasks/NA327_Proteomics_UbPulldown/data/regression.USP21_vs_all.1.csv')
+    # write_stats_workbook(
+    #     '/mnt/m/tasks/NA327_Proteomics_UbPulldown/data/regression.USP21_vs_all.1.xslx',
+    #     df,
+    #
+    # )

@@ -24,3 +24,6 @@ plotting = [
     'plotly',
     'seaborn',
 ]
+R = [
+    "rpy2"
+]
