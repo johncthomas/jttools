@@ -268,12 +268,17 @@ def add_stats_worksheet(
     worksheet: Worksheet = workbook.add_worksheet(name=sheet_name, )
     worksheet.nan_inf_to_errors = True
 
+    # Because a bunch of things need to be done by getting an integer index, I need
+    #   to know if the index will be included or not. So it's always included even if
+    #   it's just a bunch of meaningless numbers or a duplicate.
+
     # excel table does not include df.index by default
     # If it's a range index we don't want to write it,
-    if ((type(table.index) is not pd.RangeIndex)
-            # If it's already in the columns, we don't want to add it.
-            and (table.index.name not in table.columns.values)):
-        table = table.reset_index()
+    # if ((type(table.index) is not pd.RangeIndex)
+    #         # If it's already in the columns, we don't want to add it.
+    #         and (table.index.name not in table.columns.values)):
+
+    table = table.reset_index()
 
     nrows, ncols = table.shape
 
