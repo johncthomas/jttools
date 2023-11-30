@@ -324,7 +324,8 @@ def unify_indicies(*pd_obj: Union[pd.DataFrame, pd.Series]) -> Tuple[Union[pd.Da
 
 
 def df_rename_columns(df:pd.DataFrame, newcols=dict, inplace=False, verbose=False) -> pd.Index:
-    """Return index with renamed columns.
+    """Return index with renamed columns. Columns missing from newcols will be
+    unchanged (this is the main difference to using df.columns.map(newcols).
 
     Args:
         df: DataFrame with columns we want to change
@@ -346,6 +347,8 @@ def df_rename_columns(df:pd.DataFrame, newcols=dict, inplace=False, verbose=Fals
         if not (nucols==old_cols).all():
             logging.info("Columns were changed (starting with orginal): "
                          f"{old_cols.symmetric_difference(nucols, sort=False)}")
+        else:
+            logging.info('No columns changed')
 
     if not inplace:
         return nucols
@@ -426,7 +429,7 @@ def write_list(things, filename):
     """for t in things: write(t+newline)"""
     with open(filename, 'w') as f:
         f.write(
-            things.join('\n'.join(things))
+            '\n'.join(things)
         )
 
 def read_list(fn):
