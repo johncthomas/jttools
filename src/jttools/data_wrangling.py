@@ -52,9 +52,9 @@ from typing import Callable
 class AttrMapAC(AttrMap):
     """Tab completable AttrMap"""
 
-    def f(self):
-        for thing in self:
-            print(thing)
+    # def f(self):
+    #     for thing in self:
+    #         print(thing)
 
     def __dir__(self):
         super_dir:list[str] = super().__dir__()
