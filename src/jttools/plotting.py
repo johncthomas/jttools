@@ -374,3 +374,6 @@ def plt_match_xylims():
     axmin, axmax = minminmaxmax(plt.xlim(), plt.ylim())
     plt.xlim(axmin, axmax)
     plt.ylim(axmin, axmax)
+
+def plt_get_color_cycle():
+    return plt.rcParams["axes.prop_cycle"].by_key()["color"]
