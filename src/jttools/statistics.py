@@ -22,7 +22,13 @@ OLS = sm.regression.linear_model.OLS
 
 # Could  make this a function that imports and returns so we don't always start an R instance,
 #   but it's probably fine.
-from jttools.r_utils import rpy2_converter, ro, R
+try:
+    from jttools.r_utils import rpy2_converter, ro, R
+except ModuleNotFoundError:
+    rpy2_convert=None
+    ro=None
+    R=None
+    print("No rpy2, associated functions won't work. Specifically OrthoganolRegression relies on an R package.")
 
 def multipletests_fdr(ps, method='fdr_bh', **kwargs):
     """Calls statsmodels.stats.multipletests and returns the corrected
