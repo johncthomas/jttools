@@ -51,7 +51,10 @@ from jttools.plotting import *
 
 monkey_patch_dataframe(pd)
 
-from to_precision import to_precision
+try:
+    from to_precision import to_precision
+except:
+    pass
 
 AMap = AttrMapAC
 
